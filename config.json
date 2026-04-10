@@ -1,5 +1,8 @@
 {
   "maxDesktops": 9,
   "followWindow": false,
-  "autoCreateDesktops": true
+  "autoCreateDesktops": true,
+  "appRules": [
+    { "process": "notepad", "desktop": 1, "zone": "right-half" }
+  ]
 }

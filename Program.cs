@@ -4,6 +4,7 @@ static class Program
 {
     private static NotifyIcon? _trayIcon;
     private static HotkeyManager? _hotkeys;
+    private static WindowWatcher? _watcher;
 
     [STAThread]
     static void Main()
@@ -24,6 +25,12 @@ static class Program
         _hotkeys = new HotkeyManager();
         RegisterHotkeys(_hotkeys, config);
 
+        if (config.AppRules is { Count: > 0 })
+        {
+            _watcher = new WindowWatcher(config.AppRules);
+            _hotkeys.OnDisplayChange = () => _watcher.OnDisplayChange();
+        }
+
         _trayIcon = CreateTrayIcon();
         _trayIcon.Visible = true;
 
@@ -33,6 +40,7 @@ static class Program
 
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
+        _watcher?.Dispose();
         _hotkeys.Dispose();
     }
 
@@ -71,8 +79,15 @@ static class Program
             DesktopManager.TogglePin();
         });
 
+        // Alt+R — rearrange all windows
+        hk.Register(HotkeyManager.Modifiers.Alt, Keys.R, () =>
+        {
+            Console.WriteLine("Alt+R: Rearranging all windows...");
+            _watcher?.RearrangeAll();
+        });
+
         Console.WriteLine($"Registered hotkeys: Alt+1-{config.MaxDesktops} (switch), " +
-                          $"Alt+Shift+1-{config.MaxDesktops} (move), Alt+Shift+P (pin)");
+                          $"Alt+Shift+1-{config.MaxDesktops} (move), Alt+Shift+P (pin), Alt+R (rearrange)");
     }
 
     private static NotifyIcon CreateTrayIcon()
@@ -123,24 +138,49 @@ static class Program
     }
 
     /// <summary>
-    /// Creates a simple icon showing the desktop number.
+    /// Creates a tray icon showing the desktop number in a rounded box.
     /// </summary>
     private static Icon CreateDesktopIcon(int number)
     {
-        var bmp = new Bitmap(16, 16);
+        const int size = 64;
+        var bmp = new Bitmap(size, size);
         using (var g = Graphics.FromImage(bmp))
         {
-            g.Clear(Color.FromArgb(137, 180, 250)); // Catppuccin blue
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            g.Clear(Color.Transparent);
 
-            using var font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            // Rounded rectangle background
+            var rect = new Rectangle(2, 2, size - 4, size - 4);
+            int radius = 10;
+            using var path = RoundedRect(rect, radius);
+            using var bgBrush = new SolidBrush(Color.FromArgb(230, 230, 230));
+            g.FillPath(bgBrush, path);
+            using var borderPen = new Pen(Color.FromArgb(120, 120, 120), 2f);
+            g.DrawPath(borderPen, path);
+
+            // Number text
+            using var font = new Font("Segoe UI", 42f, FontStyle.Bold, GraphicsUnit.Pixel);
             string text = number.ToString();
-            var size = g.MeasureString(text, font);
-            g.DrawString(text, font, Brushes.Black,
-                (16 - size.Width) / 2,
-                (16 - size.Height) / 2);
+            var textSize = g.MeasureString(text, font);
+            using var textBrush = new SolidBrush(Color.FromArgb(30, 30, 30));
+            g.DrawString(text, font, textBrush,
+                (size - textSize.Width) / 2,
+                (size - textSize.Height) / 2);
         }
 
         return Icon.FromHandle(bmp.GetHicon());
+    }
+
+    private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(Rectangle bounds, int radius)
+    {
+        int d = radius * 2;
+        var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(bounds.X, bounds.Y, d, d, 180, 90);
+        path.AddArc(bounds.Right - d, bounds.Y, d, d, 270, 90);
+        path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+        path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 }

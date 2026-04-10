@@ -14,6 +14,12 @@ public class Config
     [JsonPropertyName("autoCreateDesktops")]
     public bool AutoCreateDesktops { get; set; } = true;
 
+    [JsonPropertyName("appRules")]
+    public List<AppRule>? AppRules { get; set; }
+
+    [JsonPropertyName("zones")]
+    public Dictionary<string, ZoneDef>? Zones { get; set; }
+
     private static readonly string ConfigPath = Path.Combine(
         AppContext.BaseDirectory, "config.json");
 
@@ -28,7 +34,9 @@ public class Config
                 if (config != null)
                 {
                     Console.WriteLine($"Config loaded: maxDesktops={config.MaxDesktops}, " +
-                                      $"followWindow={config.FollowWindow}");
+                                      $"followWindow={config.FollowWindow}, " +
+                                      $"appRules={config.AppRules?.Count ?? 0}");
+                    ZoneManager.LoadCustomZones(config.Zones);
                     return config;
                 }
             }
@@ -54,4 +62,37 @@ public class Config
         }
         catch { }
     }
+}
+
+public class AppRule
+{
+    [JsonPropertyName("process")]
+    public string Process { get; set; } = "";
+
+    [JsonPropertyName("desktop")]
+    public int Desktop { get; set; } = 0;
+
+    [JsonPropertyName("zone")]
+    public string? Zone { get; set; }
+
+    [JsonPropertyName("monitor")]
+    public string? Monitor { get; set; }
+
+    [JsonPropertyName("delayMs")]
+    public int DelayMs { get; set; } = 500;
+}
+
+public class ZoneDef
+{
+    [JsonPropertyName("x")]
+    public double X { get; set; }
+
+    [JsonPropertyName("y")]
+    public double Y { get; set; }
+
+    [JsonPropertyName("width")]
+    public double Width { get; set; }
+
+    [JsonPropertyName("height")]
+    public double Height { get; set; }
 }

@@ -45,7 +45,7 @@ public static class DesktopManager
             var desktops = VirtualDesktop.GetDesktops();
             if (index < desktops.Length)
             {
-                VirtualDesktopHelper.MoveToDesktop(hwnd, desktops[index]);
+                VirtualDesktop.MoveToDesktop(hwnd, desktops[index]);
             }
         }
         catch (Exception ex)
@@ -115,6 +115,28 @@ public static class DesktopManager
     {
         try { return VirtualDesktop.GetDesktops().Length; }
         catch { return 0; }
+    }
+
+    /// <summary>
+    /// Move a specific window handle to the desktop at the given index (0-based).
+    /// </summary>
+    public static void MoveWindowToDesktop(IntPtr hwnd, int index)
+    {
+        try
+        {
+            EnsureDesktopsExist(index + 1);
+            if (hwnd == IntPtr.Zero) return;
+
+            var desktops = VirtualDesktop.GetDesktops();
+            if (index < desktops.Length)
+            {
+                VirtualDesktop.MoveToDesktop(hwnd, desktops[index]);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to move window to desktop {index + 1}: {ex.Message}");
+        }
     }
 
     private static void EnsureDesktopsExist(int count)

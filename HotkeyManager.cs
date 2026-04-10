@@ -29,6 +29,11 @@ public sealed class HotkeyManager : NativeWindow, IDisposable
     private readonly Dictionary<int, Action> _handlers = new();
     private int _nextId = 1;
 
+    /// <summary>
+    /// Optional callback invoked when WM_DISPLAYCHANGE is received.
+    /// </summary>
+    public Action? OnDisplayChange { get; set; }
+
     public HotkeyManager()
     {
         CreateHandle(new CreateParams());
@@ -62,6 +67,10 @@ public sealed class HotkeyManager : NativeWindow, IDisposable
         {
             handler.Invoke();
             return;
+        }
+        if (m.Msg == 0x007E) // WM_DISPLAYCHANGE
+        {
+            OnDisplayChange?.Invoke();
         }
         base.WndProc(ref m);
     }
