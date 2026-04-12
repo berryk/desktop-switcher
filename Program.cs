@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace DesktopSwitcher;
 
 static class Program
@@ -9,8 +11,11 @@ static class Program
     [STAThread]
     static void Main()
     {
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+
+        Log.Clear();
 
         // Prevent multiple instances
         using var mutex = new Mutex(true, "DesktopSwitcher_SingleInstance", out bool isNew);
@@ -34,7 +39,7 @@ static class Program
         _trayIcon = CreateTrayIcon();
         _trayIcon.Visible = true;
 
-        Console.WriteLine($"Desktop Switcher running. {DesktopManager.GetDesktopCount()} desktops available.");
+        Log.Info($"Desktop Switcher running. {DesktopManager.GetDesktopCount()} desktops available.");
 
         Application.Run();
 
@@ -53,6 +58,7 @@ static class Program
             Keys key = Keys.D1 + i; // D1=1, D2=2, ..., D9=9
             hk.Register(HotkeyManager.Modifiers.Alt, key, () =>
             {
+                Log.Info($"Alt+{index + 1} pressed — switch to desktop {index + 1}");
                 DesktopManager.SwitchTo(index);
                 UpdateTrayTooltip();
             });
@@ -65,6 +71,7 @@ static class Program
             Keys key = Keys.D1 + i;
             hk.Register(HotkeyManager.Modifiers.Alt | HotkeyManager.Modifiers.Shift, key, () =>
             {
+                Log.Info($"Alt+Shift+{index + 1} pressed — move window to desktop {index + 1}");
                 if (config.FollowWindow)
                     DesktopManager.MoveWindowToAndFollow(index);
                 else
@@ -76,18 +83,28 @@ static class Program
         // Alt+Shift+P — toggle pin
         hk.Register(HotkeyManager.Modifiers.Alt | HotkeyManager.Modifiers.Shift, Keys.P, () =>
         {
+            Log.Info("Alt+Shift+P pressed — toggle pin");
             DesktopManager.TogglePin();
         });
 
         // Alt+R — rearrange all windows
         hk.Register(HotkeyManager.Modifiers.Alt, Keys.R, () =>
         {
-            Console.WriteLine("Alt+R: Rearranging all windows...");
+            Log.Info("Alt+R pressed — rearranging all windows");
             _watcher?.RearrangeAll();
         });
 
-        Console.WriteLine($"Registered hotkeys: Alt+1-{config.MaxDesktops} (switch), " +
-                          $"Alt+Shift+1-{config.MaxDesktops} (move), Alt+Shift+P (pin), Alt+R (rearrange)");
+        // Alt+Shift+T — tile windows on current desktop
+        int tileId = hk.Register(HotkeyManager.Modifiers.Alt | HotkeyManager.Modifiers.Shift, Keys.T, () =>
+        {
+            Log.Info("Alt+Shift+T pressed — tiling...");
+            WindowWatcher.TileCurrentDesktop();
+        });
+        Log.Info(tileId > 0 ? "Alt+Shift+T registered OK" : "Alt+Shift+T FAILED to register");
+
+        Log.Info($"Registered hotkeys: Alt+1-{config.MaxDesktops} (switch), " +
+                 $"Alt+Shift+1-{config.MaxDesktops} (move), Alt+Shift+P (pin), " +
+                 "Alt+R (rearrange), Alt+Shift+T (tile)");
     }
 
     private static NotifyIcon CreateTrayIcon()
@@ -103,7 +120,7 @@ static class Program
         contextMenu.Items.Add("Reload Config", null, (_, _) =>
         {
             var config = Config.Load();
-            Console.WriteLine("Config reloaded");
+            Log.Info("Config reloaded");
         });
 
         contextMenu.Items.Add("Exit", null, (_, _) =>

@@ -74,7 +74,7 @@ public static class ZoneManager
         if (BuiltInZones.TryGetValue(name, out var builtin))
             return builtin;
 
-        Console.Error.WriteLine($"Unknown zone: \"{name}\". Available: {string.Join(", ", BuiltInZones.Keys.Concat(_customZones.Keys))}");
+        Log.Error($"Unknown zone: \"{name}\". Available: {string.Join(", ", BuiltInZones.Keys.Concat(_customZones.Keys))}");
         return null;
     }
 }

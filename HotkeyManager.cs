@@ -48,7 +48,7 @@ public sealed class HotkeyManager : NativeWindow, IDisposable
         if (!RegisterHotKey(Handle, id, (uint)(modifiers | Modifiers.NoRepeat), (uint)key))
         {
             int error = Marshal.GetLastWin32Error();
-            Console.Error.WriteLine($"Failed to register hotkey {modifiers}+{key} (error {error})");
+            Log.Error($"Failed to register hotkey {modifiers}+{key} (error {error})");
             return -1;
         }
         _handlers[id] = handler;

@@ -33,9 +33,9 @@ public class Config
                 var config = JsonSerializer.Deserialize<Config>(json);
                 if (config != null)
                 {
-                    Console.WriteLine($"Config loaded: maxDesktops={config.MaxDesktops}, " +
-                                      $"followWindow={config.FollowWindow}, " +
-                                      $"appRules={config.AppRules?.Count ?? 0}");
+                    Log.Info($"Config loaded: maxDesktops={config.MaxDesktops}, " +
+                            $"followWindow={config.FollowWindow}, " +
+                            $"appRules={config.AppRules?.Count ?? 0}");
                     ZoneManager.LoadCustomZones(config.Zones);
                     return config;
                 }
@@ -43,10 +43,10 @@ public class Config
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Failed to load config: {ex.Message}");
+            Log.Error($"Failed to load config: {ex.Message}");
         }
 
-        Console.WriteLine("Using default config");
+        Log.Info("Using default config");
         var defaults = new Config();
         Save(defaults);
         return defaults;

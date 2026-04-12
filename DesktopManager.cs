@@ -27,7 +27,7 @@ public static class DesktopManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Failed to switch to desktop {index + 1}: {ex.Message}");
+            Log.Error($"Failed to switch to desktop {index + 1}: {ex.Message}");
         }
     }
 
@@ -50,7 +50,7 @@ public static class DesktopManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Failed to move window to desktop {index + 1}: {ex.Message}");
+            Log.Error($"Failed to move window to desktop {index + 1}: {ex.Message}");
         }
     }
 
@@ -76,17 +76,17 @@ public static class DesktopManager
             if (VirtualDesktop.IsPinnedWindow(hwnd))
             {
                 VirtualDesktop.UnpinWindow(hwnd);
-                Console.WriteLine("Window unpinned");
+                Log.Info("Window unpinned");
             }
             else
             {
                 VirtualDesktop.PinWindow(hwnd);
-                Console.WriteLine("Window pinned to all desktops");
+                Log.Info("Window pinned to all desktops");
             }
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Failed to toggle pin: {ex.Message}");
+            Log.Error($"Failed to toggle pin: {ex.Message}");
         }
     }
 
@@ -135,7 +135,7 @@ public static class DesktopManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Failed to move window to desktop {index + 1}: {ex.Message}");
+            Log.Error($"Failed to move window to desktop {index + 1}: {ex.Message}");
         }
     }
 

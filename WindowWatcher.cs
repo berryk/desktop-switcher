@@ -36,7 +36,7 @@ public sealed class WindowWatcher : IDisposable
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(
         IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 
@@ -49,7 +49,7 @@ public sealed class WindowWatcher : IDisposable
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromPoint(long pt, uint dwFlags);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFOEX lpmi);
 
     [DllImport("user32.dll")]
@@ -130,16 +130,16 @@ public sealed class WindowWatcher : IDisposable
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
 
         if (_hook == IntPtr.Zero)
-            Console.Error.WriteLine("Failed to set WinEvent hook for window watcher");
+            Log.Error("Failed to set WinEvent hook for window watcher");
         else
-            Console.WriteLine($"Window watcher active with {_rules.Count} app rule(s)");
+            Log.Info($"Window watcher active with {_rules.Count} app rule(s)");
 
         // Timer for delayed rearrange after display change
         _displayChangeTimer = new System.Windows.Forms.Timer { Interval = 3000 };
         _displayChangeTimer.Tick += (_, _) =>
         {
             _displayChangeTimer.Stop();
-            Console.WriteLine("Display change detected — rearranging windows");
+            Log.Info("Display change detected — rearranging windows");
             RearrangeAll();
         };
     }
@@ -185,7 +185,7 @@ public sealed class WindowWatcher : IDisposable
             }
         }
 
-        Console.WriteLine($"Monitors detected: {string.Join(", ", _monitorModels.Values)}");
+        Log.Info($"Monitors detected: {string.Join(", ", _monitorModels.Values)}");
     }
 
     private static string ExtractModelId(string deviceId)
@@ -291,7 +291,7 @@ public sealed class WindowWatcher : IDisposable
             if (rule.Desktop > 0)
             {
                 DesktopManager.MoveWindowToDesktop(hwnd, rule.Desktop - 1);
-                Console.WriteLine($"  {rule.Process} -> desktop {rule.Desktop}");
+                Log.Info($"  {rule.Process} -> desktop {rule.Desktop}");
             }
 
             // Position in zone
@@ -307,19 +307,19 @@ public sealed class WindowWatcher : IDisposable
                         if (monInfo != null)
                         {
                             PositionInZoneOnMonitor(hwnd, zone.Value, monInfo.Value.workArea);
-                            Console.WriteLine($"  {rule.Process} -> zone \"{rule.Zone}\" on {rule.Monitor}");
+                            Log.Info($"  {rule.Process} -> zone \"{rule.Zone}\" on {rule.Monitor}");
                             return;
                         }
                     }
                     // Fall back to current monitor
                     PositionInZone(hwnd, zone.Value);
-                    Console.WriteLine($"  {rule.Process} -> zone \"{rule.Zone}\"");
+                    Log.Info($"  {rule.Process} -> zone \"{rule.Zone}\"");
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Failed to apply rule for {rule.Process}: {ex.Message}");
+            Log.Error($"Failed to apply rule for {rule.Process}: {ex.Message}");
         }
     }
 
@@ -367,7 +367,7 @@ public sealed class WindowWatcher : IDisposable
             }
         }
 
-        Console.WriteLine($"Rearrange complete: {moved} window(s) repositioned");
+        Log.Info($"Rearrange complete: {moved} window(s) repositioned");
     }
 
     // --- Zone positioning ---
@@ -394,7 +394,235 @@ public sealed class WindowWatcher : IDisposable
         SetWindowPos(hwnd, IntPtr.Zero, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
+    // --- Tile current desktop ---
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WINDOWPLACEMENT
+    {
+        public int length;
+        public int flags;
+        public int showCmd;
+        public POINT ptMinPosition;
+        public POINT ptMaxPosition;
+        public RECT rcNormalPosition;
+    }
+
+    private const int SW_RESTORE = 9;
+    private const int SW_SHOWNORMAL = 1;
+    private const int WPF_ASYNCWINDOWPLACEMENT = 0x0004;
+    private const uint SWP_NOSENDCHANGING = 0x0400;
+    private const uint SWP_NOCOPYBITS = 0x0100;
+    private const uint SWP_ASYNCWINDOWPOS = 0x4000;
+    private const uint SWP_FRAMECHANGED = 0x0020;
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
+
+    private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+
+    /// <summary>
+    /// Gets the invisible border/shadow size around a window.
+    /// Returns (left, top, right, bottom) insets.
+    /// </summary>
+    private static (int left, int top, int right, int bottom) GetWindowBorderInsets(IntPtr hwnd)
+    {
+        GetWindowRect(hwnd, out RECT windowRect);
+        if (DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out RECT frameRect,
+                Marshal.SizeOf<RECT>()) != 0)
+            return (0, 0, 0, 0);
+
+        return (
+            frameRect.Left - windowRect.Left,
+            frameRect.Top - windowRect.Top,
+            windowRect.Right - frameRect.Right,
+            windowRect.Bottom - frameRect.Bottom
+        );
+    }
+
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(IntPtr hMonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
+
+    private static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (IntPtr)(-4);
+
+    /// <summary>
+    /// Tiles all visible, non-minimized windows on the current virtual desktop
+    /// into equal-width columns on the same monitor as the foreground window.
+    /// </summary>
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern int GetWindowText(IntPtr hWnd, char[] lpString, int nMaxCount);
+
+    private static string GetWindowTitle(IntPtr hwnd)
+    {
+        int len = GetWindowTextLength(hwnd);
+        if (len == 0) return "";
+        var buf = new char[len + 1];
+        GetWindowText(hwnd, buf, buf.Length);
+        return new string(buf, 0, len);
+    }
+
+    public static void TileCurrentDesktop()
+    {
+        var foreground = GetForegroundWindow();
+        Log.Info($"Tile: foreground hwnd={foreground}");
+
+        var hMonitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+        var mi = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+        if (!GetMonitorInfo(hMonitor, ref mi))
+        {
+            int err = Marshal.GetLastWin32Error();
+            Log.Error($"Tile: GetMonitorInfo failed, hMonitor={hMonitor}, cbSize={mi.cbSize}, error={err}");
+            return;
+        }
+        Log.Info($"Tile: monitor={mi.szDevice} work=({mi.rcWork.Left},{mi.rcWork.Top})-({mi.rcWork.Right},{mi.rcWork.Bottom})");
+
+        // Collect windows on the current desktop, on this monitor, that are visible and not minimized
+        int totalEnum = 0, topLevel = 0, notMinimized = 0, onMonitor = 0, onDesktop = 0;
+        var windows = new List<IntPtr>();
+        EnumWindows((hwnd, _) =>
+        {
+            totalEnum++;
+            if (!IsTopLevelAppWindow(hwnd)) return true;
+            topLevel++;
+            if (IsIconic(hwnd)) return true;
+            notMinimized++;
+            if (MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) != hMonitor) return true;
+            onMonitor++;
+
+            try
+            {
+                if (!WindowsDesktop.VirtualDesktop.IsCurrentVirtualDesktop(hwnd))
+                    return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Tile: IsCurrentVirtualDesktop failed for {hwnd}: {ex.Message}");
+                return true;
+            }
+
+            onDesktop++;
+            string title = GetWindowTitle(hwnd);
+            string proc = GetProcessName(hwnd) ?? "?";
+
+            // Skip windows with no title (hidden shell windows)
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                Log.Info($"Tile: skipping (no title) hwnd={hwnd} proc={proc}");
+                return true;
+            }
+
+            // Skip known system/overlay processes
+            if (IsTileExcludedProcess(proc))
+            {
+                Log.Info($"Tile: skipping (excluded) hwnd={hwnd} proc={proc} title=\"{title}\"");
+                return true;
+            }
+
+            Log.Info($"Tile: found window hwnd={hwnd} proc={proc} title=\"{title}\"");
+            windows.Add(hwnd);
+            return true;
+        }, IntPtr.Zero);
+
+        Log.Info($"Tile: enumerated={totalEnum} topLevel={topLevel} notMinimized={notMinimized} onMonitor={onMonitor} onDesktop={onDesktop}");
+
+        if (windows.Count == 0)
+        {
+            Log.Info("Tile: no windows to tile");
+            return;
+        }
+
+        int workW = mi.rcWork.Right - mi.rcWork.Left;
+        int workH = mi.rcWork.Bottom - mi.rcWork.Top;
+        int colWidth = workW / windows.Count;
+
+        Log.Info($"Tile: workArea={workW}x{workH}, colWidth={colWidth} for {windows.Count} windows");
+
+        for (int i = 0; i < windows.Count; i++)
+        {
+            int x = mi.rcWork.Left + (i * colWidth);
+            int w = (i == windows.Count - 1) ? (mi.rcWork.Right - x) : colWidth;
+
+            string proc = GetProcessName(windows[i]) ?? "?";
+
+            // First, restore so we can measure the shadow border
+            ShowWindow(windows[i], SW_RESTORE);
+            var insets = GetWindowBorderInsets(windows[i]);
+
+            // Expand rect into the shadow area so visible edges are flush
+            int adjX = x - insets.left;
+            int adjY = mi.rcWork.Top - insets.top;
+            int adjW = w + insets.left + insets.right;
+            int adjH = workH + insets.top + insets.bottom;
+
+            // Restore via SetWindowPlacement with target rect
+            var wp = new WINDOWPLACEMENT { length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+            GetWindowPlacement(windows[i], ref wp);
+            wp.showCmd = SW_SHOWNORMAL;
+            wp.flags = WPF_ASYNCWINDOWPLACEMENT;
+            wp.rcNormalPosition = new RECT { Left = adjX, Top = adjY, Right = adjX + adjW, Bottom = adjY + adjH };
+            SetWindowPlacement(windows[i], ref wp);
+
+            // SetWindowPos with flags that prevent the app from rejecting the resize
+            uint flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS
+                       | SWP_NOSENDCHANGING | SWP_FRAMECHANGED;
+            SetWindowPos(windows[i], IntPtr.Zero, adjX, adjY, adjW, adjH, flags);
+            SetWindowPos(windows[i], IntPtr.Zero, adjX, adjY, adjW, adjH, flags);
+
+            Log.Info($"Tile: {proc} x={x} w={w} adj=({adjX},{adjY},{adjW},{adjH}) insets=({insets.left},{insets.top},{insets.right},{insets.bottom})");
+        }
+
+        Log.Info($"Tiled {windows.Count} window(s) into equal columns");
+    }
+
     // --- Helpers ---
+
+    private static readonly HashSet<string> ExcludedProcesses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "explorer",         // taskbar, shell, hidden windows
+        "TextInputHost",    // Windows input experience
+        "M365Copilot",      // Copilot overlay
+        "SearchHost",       // Windows search
+        "ShellExperienceHost", // Start menu, action center
+        "SystemSettings",   // Settings flyouts
+        "DesktopSwitcher",  // ourselves
+    };
+
+    private static bool IsTileExcludedProcess(string processName)
+    {
+        return ExcludedProcesses.Contains(processName);
+    }
 
     private static bool IsTopLevelAppWindow(IntPtr hwnd)
     {
