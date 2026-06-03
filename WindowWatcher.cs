@@ -247,23 +247,31 @@ public sealed class WindowWatcher : IDisposable
 
         string? processName = GetProcessName(hwnd);
         if (processName == null) return;
+        if (!ProcessHasRule(processName)) return;
 
-        var rule = FindMatchingRule(processName);
-        if (rule != null)
+        _handled.Add(hwnd);
+
+        // The window title may not be set yet at show time (e.g. a Teams meeting
+        // window loads its name asynchronously), so resolve the title-based rule
+        // AFTER the delay rather than now.
+        Task.Delay(MaxDelayForProcess(processName)).ContinueWith(_ =>
         {
-            _handled.Add(hwnd);
-            Task.Delay(rule.DelayMs).ContinueWith(_ => ApplyRule(hwnd, rule),
-                TaskScheduler.FromCurrentSynchronizationContext());
-        }
+            string title = GetWindowTitle(hwnd);
+            var rule = FindMatchingRule(processName, title);
+            if (rule != null) ApplyRule(hwnd, rule);
+        }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     // --- Rule matching ---
 
     /// <summary>
-    /// Finds the first matching rule for a process. Rules with a monitor field
-    /// only match when that monitor is connected. First match wins.
+    /// Finds the first matching rule for a window. Rules with a monitor field
+    /// only match when that monitor is connected; rules with titleContains/
+    /// titleExcludes only match when the window title satisfies them (this lets
+    /// two rules share one process — e.g. a Teams meeting vs the main Teams
+    /// window). First match wins.
     /// </summary>
-    private AppRule? FindMatchingRule(string processName)
+    private AppRule? FindMatchingRule(string processName, string title)
     {
         foreach (var rule in _rules)
         {
@@ -274,9 +282,40 @@ public sealed class WindowWatcher : IDisposable
             if (!string.IsNullOrEmpty(rule.Monitor) && !IsMonitorConnected(rule.Monitor))
                 continue;
 
+            // Title filters (case-insensitive)
+            if (!string.IsNullOrEmpty(rule.TitleContains) &&
+                title.IndexOf(rule.TitleContains, StringComparison.OrdinalIgnoreCase) < 0)
+                continue;
+            if (!string.IsNullOrEmpty(rule.TitleExcludes) &&
+                title.IndexOf(rule.TitleExcludes, StringComparison.OrdinalIgnoreCase) >= 0)
+                continue;
+
             return rule;
         }
         return null;
+    }
+
+    /// <summary>True if any rule targets this process (ignoring title/monitor filters).</summary>
+    private bool ProcessHasRule(string processName)
+    {
+        foreach (var rule in _rules)
+            if (string.Equals(rule.Process, processName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Largest delayMs among rules for this process. Used when a new window
+    /// appears, so a title-based rule has time to populate (e.g. a Teams
+    /// meeting window sets its name a beat after it is shown).
+    /// </summary>
+    private int MaxDelayForProcess(string processName)
+    {
+        int max = 0;
+        foreach (var rule in _rules)
+            if (string.Equals(rule.Process, processName, StringComparison.OrdinalIgnoreCase))
+                max = Math.Max(max, rule.DelayMs);
+        return max;
     }
 
     // --- Apply rules ---
@@ -334,38 +373,24 @@ public sealed class WindowWatcher : IDisposable
         RefreshMonitorCache();
         _handled.Clear();
 
-        // Build a lookup of process name -> list of window handles
-        var windowsByProcess = new Dictionary<string, List<IntPtr>>(StringComparer.OrdinalIgnoreCase);
-
+        // Evaluate each window individually against its own title, so two windows
+        // of the same process (e.g. a Teams meeting vs the main Teams window) can
+        // match different rules. First matching rule wins.
+        int moved = 0;
         EnumWindows((hwnd, _) =>
         {
             if (!IsTopLevelAppWindow(hwnd)) return true;
             string? name = GetProcessName(hwnd);
             if (name == null) return true;
 
-            if (!windowsByProcess.TryGetValue(name, out var list))
-            {
-                list = new List<IntPtr>();
-                windowsByProcess[name] = list;
-            }
-            list.Add(hwnd);
+            var rule = FindMatchingRule(name, GetWindowTitle(hwnd));
+            if (rule == null) return true;
+
+            _handled.Add(hwnd);
+            ApplyRule(hwnd, rule);
+            moved++;
             return true;
         }, IntPtr.Zero);
-
-        // For each process that has rules, apply the first matching rule
-        int moved = 0;
-        foreach (var (processName, windows) in windowsByProcess)
-        {
-            var rule = FindMatchingRule(processName);
-            if (rule == null) continue;
-
-            foreach (var hwnd in windows)
-            {
-                _handled.Add(hwnd);
-                ApplyRule(hwnd, rule);
-                moved++;
-            }
-        }
 
         Log.Info($"Rearrange complete: {moved} window(s) repositioned");
     }
@@ -573,37 +598,141 @@ public sealed class WindowWatcher : IDisposable
         {
             int x = mi.rcWork.Left + (i * colWidth);
             int w = (i == windows.Count - 1) ? (mi.rcWork.Right - x) : colWidth;
-
-            string proc = GetProcessName(windows[i]) ?? "?";
-
-            // First, restore so we can measure the shadow border
-            ShowWindow(windows[i], SW_RESTORE);
-            var insets = GetWindowBorderInsets(windows[i]);
-
-            // Expand rect into the shadow area so visible edges are flush
-            int adjX = x - insets.left;
-            int adjY = mi.rcWork.Top - insets.top;
-            int adjW = w + insets.left + insets.right;
-            int adjH = workH + insets.top + insets.bottom;
-
-            // Restore via SetWindowPlacement with target rect
-            var wp = new WINDOWPLACEMENT { length = Marshal.SizeOf<WINDOWPLACEMENT>() };
-            GetWindowPlacement(windows[i], ref wp);
-            wp.showCmd = SW_SHOWNORMAL;
-            wp.flags = WPF_ASYNCWINDOWPLACEMENT;
-            wp.rcNormalPosition = new RECT { Left = adjX, Top = adjY, Right = adjX + adjW, Bottom = adjY + adjH };
-            SetWindowPlacement(windows[i], ref wp);
-
-            // SetWindowPos with flags that prevent the app from rejecting the resize
-            uint flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS
-                       | SWP_NOSENDCHANGING | SWP_FRAMECHANGED;
-            SetWindowPos(windows[i], IntPtr.Zero, adjX, adjY, adjW, adjH, flags);
-            SetWindowPos(windows[i], IntPtr.Zero, adjX, adjY, adjW, adjH, flags);
-
-            Log.Info($"Tile: {proc} x={x} w={w} adj=({adjX},{adjY},{adjW},{adjH}) insets=({insets.left},{insets.top},{insets.right},{insets.bottom})");
+            PlaceWindow(windows[i], x, mi.rcWork.Top, w, workH);
         }
 
         Log.Info($"Tiled {windows.Count} window(s) into equal columns");
+    }
+
+    /// <summary>
+    /// Places a window at the given visible-frame rect using GlazeWM-style
+    /// positioning (SetWindowPlacement + double SetWindowPos with SWP_NOSENDCHANGING).
+    /// The rect is expanded to compensate for invisible shadow borders.
+    /// </summary>
+    private static void PlaceWindow(IntPtr hwnd, int x, int y, int w, int h)
+    {
+        ShowWindow(hwnd, SW_RESTORE);
+        var insets = GetWindowBorderInsets(hwnd);
+
+        int adjX = x - insets.left;
+        int adjY = y - insets.top;
+        int adjW = w + insets.left + insets.right;
+        int adjH = h + insets.top + insets.bottom;
+
+        var wp = new WINDOWPLACEMENT { length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+        GetWindowPlacement(hwnd, ref wp);
+        wp.showCmd = SW_SHOWNORMAL;
+        wp.flags = WPF_ASYNCWINDOWPLACEMENT;
+        wp.rcNormalPosition = new RECT { Left = adjX, Top = adjY, Right = adjX + adjW, Bottom = adjY + adjH };
+        SetWindowPlacement(hwnd, ref wp);
+
+        uint flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS
+                   | SWP_NOSENDCHANGING | SWP_FRAMECHANGED;
+        SetWindowPos(hwnd, IntPtr.Zero, adjX, adjY, adjW, adjH, flags);
+        SetWindowPos(hwnd, IntPtr.Zero, adjX, adjY, adjW, adjH, flags);
+    }
+
+    /// <summary>
+    /// Resize the active (foreground) tiled window by deltaPx pixels.
+    /// Other tiled windows on the same monitor shrink/grow to compensate.
+    /// Positive delta = wider, negative = narrower.
+    /// </summary>
+    public static void ResizeActiveWindow(int deltaPx)
+    {
+        var fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero) return;
+
+        var hMonitor = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+        var mi = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+        if (!GetMonitorInfo(hMonitor, ref mi)) return;
+
+        // Collect tileable windows on this monitor + current desktop
+        var windows = new List<IntPtr>();
+        EnumWindows((hwnd, _) =>
+        {
+            if (!IsTopLevelAppWindow(hwnd)) return true;
+            if (IsIconic(hwnd)) return true;
+            if (MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) != hMonitor) return true;
+
+            try
+            {
+                if (!WindowsDesktop.VirtualDesktop.IsCurrentVirtualDesktop(hwnd)) return true;
+            }
+            catch { return true; }
+
+            string title = GetWindowTitle(hwnd);
+            string proc = GetProcessName(hwnd) ?? "?";
+            if (string.IsNullOrWhiteSpace(title)) return true;
+            if (IsTileExcludedProcess(proc)) return true;
+
+            windows.Add(hwnd);
+            return true;
+        }, IntPtr.Zero);
+
+        if (windows.Count < 2) return;
+
+        // Sort by current X position to preserve left-to-right order
+        windows.Sort((a, b) =>
+        {
+            GetWindowRect(a, out RECT ra);
+            GetWindowRect(b, out RECT rb);
+            return ra.Left.CompareTo(rb.Left);
+        });
+
+        int activeIdx = windows.IndexOf(fg);
+        if (activeIdx < 0) return;
+
+        // Current visible (frame-bounds) widths
+        var widths = new int[windows.Count];
+        int totalW = mi.rcWork.Right - mi.rcWork.Left;
+        for (int i = 0; i < windows.Count; i++)
+        {
+            if (DwmGetWindowAttribute(windows[i], DWMWA_EXTENDED_FRAME_BOUNDS,
+                    out RECT fb, Marshal.SizeOf<RECT>()) == 0)
+                widths[i] = fb.Right - fb.Left;
+            else
+            {
+                GetWindowRect(windows[i], out RECT wr);
+                widths[i] = wr.Right - wr.Left;
+            }
+        }
+
+        // Apply delta: active gets +delta, others split -delta equally
+        const int minW = 200;
+        int perOther = deltaPx / (windows.Count - 1);
+        int newActiveW = widths[activeIdx] + deltaPx;
+        if (newActiveW < minW) return;
+
+        for (int i = 0; i < windows.Count; i++)
+        {
+            if (i == activeIdx) continue;
+            if (widths[i] - perOther < minW) return; // would violate min width
+        }
+
+        widths[activeIdx] = newActiveW;
+        for (int i = 0; i < windows.Count; i++)
+            if (i != activeIdx) widths[i] -= perOther;
+
+        // Reposition left-to-right from work area left edge
+        int x = mi.rcWork.Left;
+        int workH = mi.rcWork.Bottom - mi.rcWork.Top;
+        for (int i = 0; i < windows.Count; i++)
+        {
+            PlaceWindow(windows[i], x, mi.rcWork.Top, widths[i], workH);
+            x += widths[i];
+        }
+
+        Log.Info($"Resize: active={GetProcessName(fg)} delta={deltaPx} newWidths=[{string.Join(",", widths)}]");
+    }
+
+    // --- Public enumeration helper (used by FocusManager) ---
+
+    /// <summary>
+    /// Enumerates top-level windows. Callback returns true to continue, false to stop.
+    /// </summary>
+    public static void EnumTopLevelWindows(Func<IntPtr, bool> callback)
+    {
+        EnumWindows((hwnd, _) => callback(hwnd), IntPtr.Zero);
     }
 
     // --- Helpers ---

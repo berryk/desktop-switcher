@@ -7,6 +7,8 @@ static class Program
     private static NotifyIcon? _trayIcon;
     private static HotkeyManager? _hotkeys;
     private static WindowWatcher? _watcher;
+    private static FocusManager? _focus;
+    private static SynchronizationContext? _uiContext;
 
     [STAThread]
     static void Main()
@@ -36,8 +38,24 @@ static class Program
             _hotkeys.OnDisplayChange = () => _watcher.OnDisplayChange();
         }
 
+        _focus = new FocusManager(config);
+
         _trayIcon = CreateTrayIcon();
         _trayIcon.Visible = true;
+
+        // Capture UI sync context so we can marshal desktop-change events back to UI thread
+        _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+
+        // Update tray icon and focus overlay whenever the desktop changes — including from
+        // taskbar, Win+Ctrl+arrow, etc.
+        WindowsDesktop.VirtualDesktop.CurrentChanged += (_, _) =>
+        {
+            _uiContext?.Post(_ =>
+            {
+                UpdateTrayTooltip();
+                _focus?.Refresh();
+            }, null);
+        };
 
         Log.Info($"Desktop Switcher running. {DesktopManager.GetDesktopCount()} desktops available.");
 
@@ -45,6 +63,7 @@ static class Program
 
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
+        _focus?.Dispose();
         _watcher?.Dispose();
         _hotkeys.Dispose();
     }
@@ -87,24 +106,93 @@ static class Program
             DesktopManager.TogglePin();
         });
 
-        // Alt+R — rearrange all windows
+        // Alt+R — rearrange all windows using the active layout
         hk.Register(HotkeyManager.Modifiers.Alt, Keys.R, () =>
         {
             Log.Info("Alt+R pressed — rearranging all windows");
             _watcher?.RearrangeAll();
         });
 
-        // Alt+Shift+T — tile windows on current desktop
-        int tileId = hk.Register(HotkeyManager.Modifiers.Alt | HotkeyManager.Modifiers.Shift, Keys.T, () =>
+        // Alt+Shift+R — cycle to the next layout (thirds <-> wide) and re-apply
+        hk.Register(HotkeyManager.Modifiers.Alt | HotkeyManager.Modifiers.Shift, Keys.R,
+            () => CycleLayout());
+
+        // Alt+T — tile windows on current desktop
+        int tileId = hk.Register(HotkeyManager.Modifiers.Alt, Keys.T, () =>
         {
-            Log.Info("Alt+Shift+T pressed — tiling...");
+            Log.Info("Alt+T pressed — tiling...");
             WindowWatcher.TileCurrentDesktop();
         });
-        Log.Info(tileId > 0 ? "Alt+Shift+T registered OK" : "Alt+Shift+T FAILED to register");
+        Log.Info(tileId > 0 ? "Alt+T registered OK" : "Alt+T FAILED to register");
+
+        // Alt+H, Alt+Left — focus previous (left) tiled window
+        hk.Register(HotkeyManager.Modifiers.Alt, Keys.H, () =>
+        {
+            Log.Info("Alt+H pressed — focus previous");
+            FocusManager.CycleFocus(-1);
+        });
+        hk.Register(HotkeyManager.Modifiers.Alt, Keys.Left, () =>
+        {
+            Log.Info("Alt+Left pressed — focus previous");
+            FocusManager.CycleFocus(-1);
+        });
+
+        // Alt+L, Alt+Right — focus next (right) tiled window
+        hk.Register(HotkeyManager.Modifiers.Alt, Keys.L, () =>
+        {
+            Log.Info("Alt+L pressed — focus next");
+            FocusManager.CycleFocus(+1);
+        });
+        hk.Register(HotkeyManager.Modifiers.Alt, Keys.Right, () =>
+        {
+            Log.Info("Alt+Right pressed — focus next");
+            FocusManager.CycleFocus(+1);
+        });
+
+        // Alt+Up — widen active window (other tiled windows shrink)
+        const int resizeStep = 80;
+        hk.Register(HotkeyManager.Modifiers.Alt, Keys.Up, () =>
+        {
+            Log.Info("Alt+Up pressed — widen active");
+            WindowWatcher.ResizeActiveWindow(+resizeStep);
+        });
+
+        // Alt+Down — narrow active window (other tiled windows grow)
+        hk.Register(HotkeyManager.Modifiers.Alt, Keys.Down, () =>
+        {
+            Log.Info("Alt+Down pressed — narrow active");
+            WindowWatcher.ResizeActiveWindow(-resizeStep);
+        });
+
+        // Alt+W — close active window
+        hk.Register(HotkeyManager.Modifiers.Alt, Keys.W, () =>
+        {
+            Log.Info("Alt+W pressed — close active window");
+            FocusManager.CloseActiveWindow();
+        });
 
         Log.Info($"Registered hotkeys: Alt+1-{config.MaxDesktops} (switch), " +
                  $"Alt+Shift+1-{config.MaxDesktops} (move), Alt+Shift+P (pin), " +
-                 "Alt+R (rearrange), Alt+Shift+T (tile)");
+                 "Alt+R (rearrange), Alt+Shift+R (cycle layout), Alt+T (tile), " +
+                 "Alt+H/L or Alt+Left/Right (focus), " +
+                 "Alt+Up/Down (resize), Alt+W (close)");
+    }
+
+    /// <summary>
+    /// Cycles to the next defined layout, re-applies all window rules, and
+    /// shows a tray notification naming the now-active layout.
+    /// </summary>
+    private static void CycleLayout()
+    {
+        if (!ZoneManager.CycleLayout())
+        {
+            Log.Info("Alt+Shift+R pressed — no layouts defined");
+            return;
+        }
+        string name = ZoneManager.ActiveLayout ?? "?";
+        Log.Info($"Alt+Shift+R pressed — layout \"{name}\"");
+        _watcher?.RearrangeAll();
+        _trayIcon?.ShowBalloonTip(1500, "Desktop Switcher", $"Layout: {name}", ToolTipIcon.None);
     }
 
     private static NotifyIcon CreateTrayIcon()

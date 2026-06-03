@@ -20,6 +20,34 @@ public class Config
     [JsonPropertyName("zones")]
     public Dictionary<string, ZoneDef>? Zones { get; set; }
 
+    /// <summary>
+    /// Named multi-pane layouts. Each layout maps pane names (e.g. "left",
+    /// "middle", "right") to a rectangle. The active layout's panes are exposed
+    /// as zones named "pane:&lt;name&gt;" (e.g. "pane:middle") for app rules.
+    /// Switch the active layout at runtime with the layout hotkeys.
+    /// </summary>
+    [JsonPropertyName("layouts")]
+    public Dictionary<string, Dictionary<string, ZoneDef>>? Layouts { get; set; }
+
+    /// <summary>Name of the layout to activate at startup. Defaults to the first defined.</summary>
+    [JsonPropertyName("defaultLayout")]
+    public string? DefaultLayout { get; set; }
+
+    [JsonPropertyName("focusHighlight")]
+    public bool FocusHighlight { get; set; } = true;
+
+    [JsonPropertyName("focusBorderColor")]
+    public string FocusBorderColor { get; set; } = "#7BA7E1";
+
+    [JsonPropertyName("focusBorderWidth")]
+    public int FocusBorderWidth { get; set; } = 3;
+
+    [JsonPropertyName("focusFollowsMouse")]
+    public bool FocusFollowsMouse { get; set; } = false;
+
+    [JsonPropertyName("focusFollowsMouseDelayMs")]
+    public int FocusFollowsMouseDelayMs { get; set; } = 250;
+
     private static readonly string ConfigPath = Path.Combine(
         AppContext.BaseDirectory, "config.json");
 
@@ -37,6 +65,7 @@ public class Config
                             $"followWindow={config.FollowWindow}, " +
                             $"appRules={config.AppRules?.Count ?? 0}");
                     ZoneManager.LoadCustomZones(config.Zones);
+                    ZoneManager.LoadLayouts(config.Layouts, config.DefaultLayout);
                     return config;
                 }
             }
@@ -77,6 +106,14 @@ public class AppRule
 
     [JsonPropertyName("monitor")]
     public string? Monitor { get; set; }
+
+    /// <summary>Only match windows whose title contains this string (case-insensitive).</summary>
+    [JsonPropertyName("titleContains")]
+    public string? TitleContains { get; set; }
+
+    /// <summary>Only match windows whose title does NOT contain this string (case-insensitive).</summary>
+    [JsonPropertyName("titleExcludes")]
+    public string? TitleExcludes { get; set; }
 
     [JsonPropertyName("delayMs")]
     public int DelayMs { get; set; } = 500;
