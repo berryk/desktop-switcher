@@ -117,6 +117,13 @@ static class Program
         hk.Register(HotkeyManager.Modifiers.Alt | HotkeyManager.Modifiers.Shift, Keys.R,
             () => CycleLayout());
 
+        // Alt+Shift+H — toggle the blue focus highlight on/off
+        hk.Register(HotkeyManager.Modifiers.Alt | HotkeyManager.Modifiers.Shift, Keys.H, () =>
+        {
+            bool on = _focus?.ToggleHighlight() ?? false;
+            Log.Info($"Alt+Shift+H pressed — focus highlight {(on ? "ON" : "OFF")}");
+        });
+
         // Alt+T — tile windows on current desktop
         int tileId = hk.Register(HotkeyManager.Modifiers.Alt, Keys.T, () =>
         {
@@ -173,7 +180,8 @@ static class Program
 
         Log.Info($"Registered hotkeys: Alt+1-{config.MaxDesktops} (switch), " +
                  $"Alt+Shift+1-{config.MaxDesktops} (move), Alt+Shift+P (pin), " +
-                 "Alt+R (rearrange), Alt+Shift+R (cycle layout), Alt+T (tile), " +
+                 "Alt+R (rearrange), Alt+Shift+R (cycle layout), " +
+                 "Alt+Shift+H (toggle highlight), Alt+T (tile), " +
                  "Alt+H/L or Alt+Left/Right (focus), " +
                  "Alt+Up/Down (resize), Alt+W (close)");
     }
@@ -192,7 +200,6 @@ static class Program
         string name = ZoneManager.ActiveLayout ?? "?";
         Log.Info($"Alt+Shift+R pressed — layout \"{name}\"");
         _watcher?.RearrangeAll();
-        _trayIcon?.ShowBalloonTip(1500, "Desktop Switcher", $"Layout: {name}", ToolTipIcon.None);
     }
 
     private static NotifyIcon CreateTrayIcon()

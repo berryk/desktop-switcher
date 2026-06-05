@@ -115,6 +115,14 @@ public class AppRule
     [JsonPropertyName("titleExcludes")]
     public string? TitleExcludes { get; set; }
 
+    /// <summary>Only match windows whose title matches this regex (case-insensitive).</summary>
+    [JsonPropertyName("titleRegex")]
+    public string? TitleRegex { get; set; }
+
+    /// <summary>Only match windows whose title does NOT match this regex (case-insensitive).</summary>
+    [JsonPropertyName("titleNotRegex")]
+    public string? TitleNotRegex { get; set; }
+
     [JsonPropertyName("delayMs")]
     public int DelayMs { get; set; } = 500;
 }

@@ -2,10 +2,10 @@
   "maxDesktops": 9,
   "followWindow": false,
   "autoCreateDesktops": true,
-  "focusHighlight": true,
+  "focusHighlight": false,
   "focusBorderColor": "#7BA7E1",
   "focusBorderWidth": 3,
-  "focusFollowsMouse": true,
+  "focusFollowsMouse": false,
   "focusFollowsMouseDelayMs": 250,
   "layouts": {
     "thirds": {
@@ -21,8 +21,12 @@
   },
   "defaultLayout": "wide",
   "appRules": [
-    { "process": "ms-teams", "zone": "pane:left",   "titleContains": "Microsoft Teams", "delayMs": 500 },
-    { "process": "ms-teams", "zone": "pane:middle", "titleExcludes": "Microsoft Teams", "delayMs": 1500 },
-    { "process": "olk",      "zone": "pane:right",  "delayMs": 500 }
+    { "process": "ms-teams", "zone": "pane:left",   "titleRegex": "^(Activity|Chat|Teams|Calendar|Calls|Files|Apps|Communities|Help|Settings|Store|Viva)\\b|\\|.*\\|.*Microsoft Teams$", "monitor": "DELA132", "delayMs": 500 },
+    { "process": "ms-teams", "zone": "pane:middle", "titleContains": "Microsoft Teams", "monitor": "DELA132", "delayMs": 1500 },
+    { "process": "olk",      "zone": "pane:right",  "monitor": "DELA132", "delayMs": 500 },
+
+    { "process": "ms-teams", "zone": "right-half",  "titleRegex": "^(Activity|Chat|Teams|Calendar|Calls|Files|Apps|Communities|Help|Settings|Store|Viva)\\b|\\|.*\\|.*Microsoft Teams$", "delayMs": 500 },
+    { "process": "ms-teams", "zone": "left-half",   "titleContains": "Microsoft Teams", "delayMs": 1500 },
+    { "process": "olk",      "zone": "maximize",    "delayMs": 500 }
   ]
 }

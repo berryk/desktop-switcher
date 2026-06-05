@@ -189,7 +189,8 @@ public sealed class FocusManager : IDisposable
         int idChild, uint dwEventThread, uint dwmsEventTime)
     {
         if (idObject != 0) return; // only window-level events
-        Log.Info($"[focus] FG change -> hwnd={hwnd} class={GetWindowClass(hwnd)}");
+        if (_overlay != null) // skip log spam when the highlight is off
+            Log.Info($"[focus] FG change -> hwnd={hwnd} class={GetWindowClass(hwnd)}");
         UpdateForeground(hwnd);
     }
 
@@ -348,6 +349,33 @@ public sealed class FocusManager : IDisposable
     public void Refresh()
     {
         UpdateForeground(GetForegroundWindow());
+    }
+
+    /// <summary>True if the focus highlight overlay is currently active.</summary>
+    public bool HighlightEnabled => _overlay != null;
+
+    /// <summary>
+    /// Toggles the focus highlight overlay on/off at runtime. When off, the
+    /// overlay is destroyed so foreground/location events stop redrawing it.
+    /// Returns the new state (true = on).
+    /// </summary>
+    public bool ToggleHighlight()
+    {
+        if (_overlay != null)
+        {
+            _overlay.Hide();
+            _overlay.Dispose();
+            _overlay = null;
+            Log.Info("[focus] highlight toggled OFF");
+            return false;
+        }
+
+        _overlay = new FocusOverlay(_config.FocusBorderColor, _config.FocusBorderWidth);
+        _overlay.Show();
+        _currentForeground = IntPtr.Zero;
+        UpdateForeground(GetForegroundWindow());
+        Log.Info("[focus] highlight toggled ON");
+        return true;
     }
 
     // --- Focus cycling (called from hotkey handlers) ---

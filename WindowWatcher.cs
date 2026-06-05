@@ -289,6 +289,14 @@ public sealed class WindowWatcher : IDisposable
             if (!string.IsNullOrEmpty(rule.TitleExcludes) &&
                 title.IndexOf(rule.TitleExcludes, StringComparison.OrdinalIgnoreCase) >= 0)
                 continue;
+            if (!string.IsNullOrEmpty(rule.TitleRegex) &&
+                !System.Text.RegularExpressions.Regex.IsMatch(title, rule.TitleRegex,
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                continue;
+            if (!string.IsNullOrEmpty(rule.TitleNotRegex) &&
+                System.Text.RegularExpressions.Regex.IsMatch(title, rule.TitleNotRegex,
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                continue;
 
             return rule;
         }
